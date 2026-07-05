@@ -2,9 +2,9 @@
 
 一个将本机 Codex session id 导出为可视化 HTML 的跨平台 CLI，支持完整导出和仅对话导出。
 
-下图由 session `019f307f-c821-7511-8670-4ec58093bc59` 使用 `-chat_only` 生成：
+下图由 session `019f3089-fab3-78e0-a4f2-caa4a0293735` 使用 `-chat_only` 生成：
 
-![chat_only 导出示例](examples/chat-only-019f307f.png)
+<img src="examples/chat-only-019f3089.png" alt="chat_only 导出示例" style="zoom:30%;" />
 
 ## 快速开始
 
