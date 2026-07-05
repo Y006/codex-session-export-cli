@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 test-*.html
 examples/*.html
+!examples/chat-only-019f3089.html
 *.log
