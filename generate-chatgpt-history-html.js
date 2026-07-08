@@ -576,6 +576,11 @@ function htmlTemplate(data) {
       border-left: 2px solid var(--border-muted);
       color: var(--muted);
     }
+    .markdown hr {
+      border: 0;
+      border-top: 1px solid var(--border-muted);
+      margin: var(--line-height) 0;
+    }
     .markdown table {
       width: 100%;
       margin-top: var(--line-height);
@@ -912,6 +917,10 @@ function htmlTemplate(data) {
           return /^\\s*\\|?\\s*:?-{3,}:?\\s*(\\|\\s*:?-{3,}:?\\s*)+\\|?\\s*$/.test(value || "");
         }
 
+        function isHorizontalRule(value) {
+          return /^\\s{0,3}(?:-{3,}|\\*{3,}|_{3,})\\s*$/.test(value || "");
+        }
+
         function splitTableRow(value) {
           return String(value || "")
             .trim()
@@ -943,6 +952,12 @@ function htmlTemplate(data) {
           if (!line.trim()) {
             flushParagraph();
             closeList();
+            continue;
+          }
+          if (isHorizontalRule(line)) {
+            flushParagraph();
+            closeList();
+            html.push("<hr>");
             continue;
           }
           if (line.includes("|") && isTableSeparator(lines[i + 1])) {
