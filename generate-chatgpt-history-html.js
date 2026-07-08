@@ -643,6 +643,117 @@ function htmlTemplate(data) {
       text-decoration: underline;
       text-underline-offset: 2px;
     }
+    .attachment-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .attachment-button {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 8px;
+      border: 1px solid var(--border-muted);
+      border-radius: 3px;
+      background: var(--panel-bg-3);
+      color: var(--border-accent);
+      text-decoration: none;
+      font-size: calc(10px + var(--font-bump));
+    }
+    .attachment-button:hover {
+      border-color: var(--border-accent);
+      background: var(--selected-bg);
+    }
+    button.attachment-button {
+      font: inherit;
+      cursor: pointer;
+    }
+    .conversation-placeholder {
+      color: var(--muted);
+      border: 1px dashed var(--border-muted);
+    }
+    .preview-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 28px;
+      background: rgba(20, 24, 27, 0.72);
+    }
+    .preview-dialog {
+      width: min(1100px, calc(100vw - 56px));
+      height: min(780px, calc(100vh - 56px));
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid var(--border-muted);
+      border-radius: 4px;
+      background: var(--panel-bg);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+    }
+    .preview-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-muted);
+      background: var(--panel-bg-2);
+    }
+    .preview-title {
+      color: var(--warning);
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .preview-subtitle {
+      color: var(--dim);
+      font-size: calc(10px + var(--font-bump));
+      overflow-wrap: anywhere;
+    }
+    .preview-controls {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .preview-body {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+      background: var(--body-bg);
+    }
+    .preview-body img {
+      display: block;
+      max-width: 100%;
+      max-height: 100%;
+      margin: 0 auto;
+      object-fit: contain;
+    }
+    .preview-body iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #fff;
+    }
+    .preview-body pre {
+      margin-top: 0;
+      min-height: 100%;
+    }
+    .preview-note {
+      padding: 10px;
+      border: 1px solid var(--border-muted);
+      border-radius: 4px;
+      color: var(--muted);
+      background: rgba(0, 0, 0, 0.12);
+    }
+    .preview-error {
+      color: var(--error);
+      border-color: var(--error);
+    }
     .empty {
       padding: var(--block-inset);
       border-radius: 4px;
@@ -680,6 +791,21 @@ function htmlTemplate(data) {
       <section id="conversation-view"></section>
     </main>
   </div>
+  <div class="preview-modal hidden" id="preview-modal" aria-hidden="true">
+    <div class="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title">
+      <div class="preview-header">
+        <div>
+          <div class="preview-title" id="preview-title">附件预览</div>
+          <div class="preview-subtitle" id="preview-subtitle"></div>
+        </div>
+        <div class="preview-controls">
+          <a class="attachment-button" id="preview-open-link" href="#" target="_blank" rel="noreferrer">新页面打开</a>
+          <button class="attachment-button" type="button" id="preview-close">关闭</button>
+        </div>
+      </div>
+      <div class="preview-body" id="preview-body"></div>
+    </div>
+  </div>
   <script type="application/json" id="chat-data">${embedded}</script>
   <script>
     (function () {
@@ -698,6 +824,16 @@ function htmlTemplate(data) {
       const resizer = document.getElementById("sidebar-resizer");
       const MIN_CONTENT_WIDTH = 320;
       const messageSearch = new Map();
+      const attachmentRegistry = new Map();
+      const renderedConversations = new Set();
+      const previewModal = document.getElementById("preview-modal");
+      const previewTitle = document.getElementById("preview-title");
+      const previewSubtitle = document.getElementById("preview-subtitle");
+      const previewBody = document.getElementById("preview-body");
+      const previewOpenLink = document.getElementById("preview-open-link");
+      const previewClose = document.getElementById("preview-close");
+      let previewObjectUrl = "";
+      let activePreviewConversationId = "";
 
       function escapeHtml(value) {
         return String(value == null ? "" : value)
@@ -879,6 +1015,136 @@ function htmlTemplate(data) {
         return (bytes / 1024 / 1024).toFixed(1) + " MB";
       }
 
+      function extensionOf(value) {
+        const text = String(value || "").split(/[?#]/)[0].toLowerCase();
+        const match = text.match(/\\.([a-z0-9]+)$/);
+        return match ? match[1] : "";
+      }
+
+      function attachmentExtension(attachment) {
+        return extensionOf(attachment.name) || extensionOf(attachment.localFile);
+      }
+
+      function inferPreviewKind(attachment) {
+        const ext = attachmentExtension(attachment);
+        const mime = String(attachment.mimeType || "").toLowerCase();
+        if (attachment.width && attachment.height) return "image";
+        if (mime.indexOf("image/") === 0) return "image";
+        if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tif", "tiff"].includes(ext)) return "image";
+        if (mime === "application/pdf" || ext === "pdf") return "pdf";
+        if (mime.indexOf("text/") === 0) return "text";
+        if (["txt", "md", "csv", "json", "log", "xml", "html", "htm"].includes(ext)) return "text";
+        return "unsupported";
+      }
+
+      function inferMimeType(attachment, kind) {
+        const ext = attachmentExtension(attachment);
+        if (attachment.mimeType) return attachment.mimeType;
+        if (kind === "pdf") return "application/pdf";
+        if (kind === "image") {
+          if (ext === "svg") return "image/svg+xml";
+          if (ext === "jpg") return "image/jpeg";
+          if (ext) return "image/" + ext;
+          return "image/png";
+        }
+        if (kind === "text") return "text/plain;charset=utf-8";
+        return "application/octet-stream";
+      }
+
+      function registerAttachment(attachment, conversation, message, attachmentIndex) {
+        const key = [conversation.index, message.index, attachmentIndex].join("-");
+        attachmentRegistry.set(key, { attachment, conversation, message });
+        return key;
+      }
+
+      function unregisterConversationAttachments(conversation) {
+        attachmentRegistry.forEach(function (item, key) {
+          if (item.conversation && item.conversation.id === conversation.id) {
+            attachmentRegistry.delete(key);
+          }
+        });
+      }
+
+      function revokePreviewObjectUrl() {
+        if (!previewObjectUrl) return;
+        URL.revokeObjectURL(previewObjectUrl);
+        previewObjectUrl = "";
+      }
+
+      function closePreview() {
+        revokePreviewObjectUrl();
+        activePreviewConversationId = "";
+        previewModal.classList.add("hidden");
+        previewModal.setAttribute("aria-hidden", "true");
+        previewBody.innerHTML = "";
+      }
+
+      function previewMessage(value, className) {
+        return '<div class="preview-note ' + (className || "") + '">' + escapeHtml(value) + "</div>";
+      }
+
+      function openPreview(key) {
+        const item = attachmentRegistry.get(String(key));
+        if (!item) return;
+        const attachment = item.attachment;
+        const title = attachment.name || attachment.id || "attachment";
+        const href = attachment.localFile ? fileHref(attachment.localFile) : "#";
+        const kind = inferPreviewKind(attachment);
+        const mime = inferMimeType(attachment, kind);
+        revokePreviewObjectUrl();
+        activePreviewConversationId = item.conversation ? item.conversation.id : "";
+        previewTitle.textContent = title;
+        previewSubtitle.textContent = [
+          item.conversation ? "conversation " + item.conversation.index + " / " + item.conversation.title : "",
+          attachment.sizeBytes ? formatBytes(attachment.sizeBytes) : "",
+          attachment.localFile || "未找到本地文件"
+        ].filter(Boolean).join(" / ");
+        previewOpenLink.href = href;
+        previewModal.classList.remove("hidden");
+        previewModal.setAttribute("aria-hidden", "false");
+
+        if (!attachment.localFile) {
+          previewBody.innerHTML = previewMessage("这个附件在当前导出目录里没有可引用的本地文件，只能显示元数据。", "preview-error");
+          return;
+        }
+
+        if (kind === "image") {
+          previewBody.innerHTML = '<img src="' + href + '" alt="' + escapeHtml(title) + '" loading="lazy">';
+          return;
+        }
+
+        if (kind === "pdf") {
+          previewBody.innerHTML = previewMessage("PDF 预览正在加载。若浏览器限制读取本地文件，请使用“新页面打开”。");
+          fetch(href).then(function (response) {
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            return response.blob();
+          }).then(function (blob) {
+            previewObjectUrl = URL.createObjectURL(new Blob([blob], { type: mime }));
+            previewBody.innerHTML = '<iframe src="' + previewObjectUrl + '" title="' + escapeHtml(title) + '"></iframe>';
+          }).catch(function () {
+            previewBody.innerHTML = previewMessage("无法用脚本读取 PDF，下面改用直接嵌入链接尝试预览。", "preview-error") +
+              '<iframe src="' + href + '" title="' + escapeHtml(title) + '"></iframe>';
+          });
+          return;
+        }
+
+        if (kind === "text") {
+          previewBody.innerHTML = previewMessage("文本预览正在加载。");
+          fetch(href).then(function (response) {
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            return response.text();
+          }).then(function (text) {
+            previewBody.innerHTML = "<pre>" + escapeHtml(text) + "</pre>";
+          }).catch(function () {
+            previewBody.innerHTML = previewMessage("无法用脚本读取文本文件，下面改用直接嵌入链接尝试预览。", "preview-error") +
+              '<iframe src="' + href + '" title="' + escapeHtml(title) + '"></iframe>';
+          });
+          return;
+        }
+
+        previewBody.innerHTML = previewMessage("这个格式不支持在浏览器内预览。请使用“新页面打开”或系统默认应用打开。", "preview-error");
+      }
+
       function renderCountPills(items) {
         if (!items || !items.length) return "";
         return items.map(function (item) {
@@ -934,10 +1200,11 @@ function htmlTemplate(data) {
         ].join(" ").toLowerCase();
       }
 
-      function renderAttachments(attachments) {
+      function renderAttachments(attachments, conversation, message) {
         if (!attachments || !attachments.length) return "";
         return '<div class="attachments">' + attachments.map(function (attachment, index) {
           const title = attachment.name || attachment.id || "attachment " + (index + 1);
+          const key = registerAttachment(attachment, conversation, message, index);
           const lines = [
             attachment.id ? "id: " + attachment.id : "",
             attachment.mimeType ? "mime: " + attachment.mimeType : "",
@@ -945,10 +1212,15 @@ function htmlTemplate(data) {
             attachment.width && attachment.height ? "shape: " + attachment.width + " x " + attachment.height : "",
             attachment.localFile ? "local: " + attachment.localFile : "local: 未在导出目录中找到对应 .dat"
           ].filter(Boolean);
+          const actions = [
+            attachment.localFile ? '<button class="attachment-button attachment-preview" type="button" data-attachment-key="' + key + '">预览</button>' : "",
+            attachment.localFile ? '<a class="attachment-button" href="' + fileHref(attachment.localFile) + '" target="_blank" rel="noreferrer">打开本地附件</a>' : "",
+            !attachment.localFile ? '<span class="attachment-meta">当前包内无本地文件，无法预览</span>' : ""
+          ].filter(Boolean).join("");
           return '<div class="attachment">' +
             '<div class="attachment-title">' + escapeHtml(title) + "</div>" +
             '<div class="attachment-meta">' + escapeHtml(lines.join(" / ")) + "</div>" +
-            (attachment.localFile ? '<div class="attachment-meta"><a href="' + fileHref(attachment.localFile) + '" target="_blank" rel="noreferrer">打开本地附件</a></div>' : "") +
+            (actions ? '<div class="attachment-actions">' + actions + "</div>" : "") +
             "</div>";
         }).join("") + "</div>";
       }
@@ -958,6 +1230,9 @@ function htmlTemplate(data) {
           conversationView.innerHTML = '<div class="empty">没有解析到可展示的用户/ChatGPT 消息。</div>';
           return;
         }
+        attachmentRegistry.clear();
+        messageSearch.clear();
+        renderedConversations.clear();
         const blocks = [];
         data.conversations.forEach(function (conversation) {
           blocks.push('<section class="conversation-section" id="' + conversationSectionId(conversation) + '">');
@@ -972,23 +1247,74 @@ function htmlTemplate(data) {
             "<dt>更新时间</dt><dd>" + escapeHtml(formatTime(conversation.updateMs)) + "</dd>" +
             "</dl>");
           blocks.push("</div></div>");
-          blocks.push(conversation.messages.map(function (message) {
-            const roleClass = message.role === "assistant" ? "assistant" : "user";
-            const domId = messageDomId(conversation, message);
-            messageSearch.set(domId, searchTextForMessage(conversation, message));
-            return [
-              '<article class="message" id="' + domId + '" data-turn="' + escapeHtml(message.turnIndex) + '">',
-              '<div class="timestamp">' + escapeHtml(formatTime(message.createdMs)) + "</div>",
-              '<section class="entry-block ' + roleClass + '">',
-              '<div class="speaker-line"><span class="label">turn ' + escapeHtml(message.turnIndex) + " / " + escapeHtml(message.roleLabel) + '</span><span class="message-index">message ' + message.index + "</span></div>",
-              renderMarkdown(message.text || "[空消息]"),
-              renderAttachments(message.attachments),
-              "</section></article>"
-            ].join("");
-          }).join(""));
+          blocks.push('<div class="conversation-messages" id="conversation-' + conversation.index + '-messages" data-conversation-index="' + conversation.index + '">' +
+            conversationPlaceholder("点击左侧 conversation 或消息后加载此对话内容。") +
+            "</div>");
           blocks.push("</section>");
         });
         conversationView.innerHTML = blocks.join("");
+      }
+
+      function conversationPlaceholder(message) {
+        return '<div class="entry-block conversation-placeholder">' + escapeHtml(message) + "</div>";
+      }
+
+      function renderConversationMessages(conversation) {
+        const container = document.getElementById("conversation-" + conversation.index + "-messages");
+        if (!container || renderedConversations.has(conversation.id)) return;
+        const html = conversation.messages.map(function (message) {
+          const roleClass = message.role === "assistant" ? "assistant" : "user";
+          const domId = messageDomId(conversation, message);
+          messageSearch.set(domId, searchTextForMessage(conversation, message));
+          return [
+            '<article class="message" id="' + domId + '" data-turn="' + escapeHtml(message.turnIndex) + '">',
+            '<div class="timestamp">' + escapeHtml(formatTime(message.createdMs)) + "</div>",
+            '<section class="entry-block ' + roleClass + '">',
+            '<div class="speaker-line"><span class="label">turn ' + escapeHtml(message.turnIndex) + " / " + escapeHtml(message.roleLabel) + '</span><span class="message-index">message ' + message.index + "</span></div>",
+            renderMarkdown(message.text || "[空消息]"),
+            renderAttachments(message.attachments, conversation, message),
+            "</section></article>"
+          ].join("");
+        }).join("");
+        container.innerHTML = html || conversationPlaceholder("这个 conversation 没有可展示消息。");
+        renderedConversations.add(conversation.id);
+        applyQueryToDom();
+      }
+
+      function unloadConversationMessages(conversation) {
+        const container = document.getElementById("conversation-" + conversation.index + "-messages");
+        if (!container || !renderedConversations.has(conversation.id)) return;
+        if (activePreviewConversationId === conversation.id) closePreview();
+        conversation.messages.forEach(function (message) {
+          messageSearch.delete(messageDomId(conversation, message));
+        });
+        unregisterConversationAttachments(conversation);
+        container.innerHTML = conversationPlaceholder("左侧已收起，点击左侧 conversation 重新加载此对话内容。");
+        renderedConversations.delete(conversation.id);
+      }
+
+      function unloadCollapsedConversations() {
+        if (state.query) return;
+        data.conversations.forEach(function (conversation) {
+          if (state.collapsedConversations.has(conversation.id)) {
+            unloadConversationMessages(conversation);
+          }
+        });
+      }
+
+      function conversationById(conversationId) {
+        return data.conversations.find(function (conversation) { return conversation.id === conversationId; }) || null;
+      }
+
+      function conversationFromTargetId(targetId) {
+        const match = String(targetId || "").match(/^conversation-(\\d+)-/);
+        if (!match) return null;
+        return data.conversations[Number(match[1]) - 1] || null;
+      }
+
+      function ensureConversationRenderedForTarget(targetId) {
+        const conversation = conversationFromTargetId(targetId);
+        if (conversation) renderConversationMessages(conversation);
       }
 
       function compactPreview(value, maxLength) {
@@ -1060,14 +1386,19 @@ function htmlTemplate(data) {
         tree.querySelectorAll(".tree-node").forEach(function (node) {
           node.addEventListener("click", function () {
             const conversationId = node.dataset.conversationToggle;
+            let shouldRenderBeforeScroll = true;
             if (conversationId && !state.query) {
+              const conversation = conversationById(conversationId);
               if (state.collapsedConversations.has(conversationId)) {
                 state.collapsedConversations.delete(conversationId);
+                if (conversation) renderConversationMessages(conversation);
               } else {
                 state.collapsedConversations.add(conversationId);
+                if (conversation) unloadConversationMessages(conversation);
+                shouldRenderBeforeScroll = false;
               }
             }
-            activate(node.dataset.target, true);
+            activate(node.dataset.target, true, { renderBeforeScroll: shouldRenderBeforeScroll });
             renderTree();
           });
         });
@@ -1088,8 +1419,10 @@ function htmlTemplate(data) {
           '<span class="tree-content ' + options.className + '">' + escapeHtml(options.label) + "</span></button>";
       }
 
-      function activate(targetId, shouldScroll) {
+      function activate(targetId, shouldScroll, options) {
         state.activeId = targetId;
+        const renderBeforeScroll = !options || options.renderBeforeScroll !== false;
+        if (shouldScroll && renderBeforeScroll) ensureConversationRenderedForTarget(targetId);
         document.querySelectorAll(".tree-node").forEach(function (node) {
           node.classList.toggle("active", node.dataset.target === targetId);
         });
@@ -1099,7 +1432,7 @@ function htmlTemplate(data) {
         content.scrollTop = Math.max(0, target.offsetTop - content.offsetTop - 12);
       }
 
-      function applyQuery() {
+      function applyQueryToDom() {
         const query = state.query.toLowerCase();
         document.querySelectorAll("#conversation-view .message").forEach(function (node) {
           const searchText = messageSearch.get(node.id) || node.textContent.toLowerCase();
@@ -1112,12 +1445,36 @@ function htmlTemplate(data) {
           }
           const conversation = data.conversations[Number((section.id.match(/conversation-(\\d+)-section/) || [])[1]) - 1];
           const ownText = conversation ? searchTextForConversation(conversation) : "";
+          const hasMatchingMessage = conversation ? conversation.messages.some(function (message) {
+            return searchTextForMessage(conversation, message).includes(query);
+          }) : false;
           const hasVisibleMessage = Array.from(section.querySelectorAll(".message")).some(function (node) {
             return !node.classList.contains("hidden");
           });
-          section.classList.toggle("hidden", !ownText.includes(query) && !hasVisibleMessage);
+          section.classList.toggle("hidden", !ownText.includes(query) && !hasMatchingMessage && !hasVisibleMessage);
         });
+      }
+
+      function applyQuery() {
+        unloadCollapsedConversations();
+        applyQueryToDom();
         renderTree();
+      }
+
+      function setupPreviewModal() {
+        document.addEventListener("click", function (event) {
+          const previewButton = event.target.closest && event.target.closest(".attachment-preview");
+          if (!previewButton) return;
+          event.preventDefault();
+          openPreview(previewButton.dataset.attachmentKey);
+        });
+        previewClose.addEventListener("click", closePreview);
+        previewModal.addEventListener("click", function (event) {
+          if (event.target === previewModal) closePreview();
+        });
+        window.addEventListener("keydown", function (event) {
+          if (event.key === "Escape" && !previewModal.classList.contains("hidden")) closePreview();
+        });
       }
 
       function setupSidebarResize() {
@@ -1163,6 +1520,7 @@ function htmlTemplate(data) {
 
       renderHeader();
       renderConversation();
+      setupPreviewModal();
       setupSidebarResize();
       applyQuery();
     })();
