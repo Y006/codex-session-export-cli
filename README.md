@@ -43,3 +43,11 @@ python3 codex-session-export.py -help
 ## 致谢
 
 本项目的 HTML 展示样式参考了 [companion-inc/feynman](https://github.com/companion-inc/feynman) 的 session export 视觉风格，并在此基础上适配 Codex session 的数据结构与导出需求。
+
+## 新增：ChatGPT 网页端数据导出处理
+
+新增 `chatgpt-history-export.py` 和 `generate-chatgpt-history-html.js`，用于读取 ChatGPT 网页端数据导出目录中的 `conversations-*.json`、`conversation_asset_file_names.json`、`library_files.json` 和本地 `file_*.dat` 附件，生成可离线浏览的历史对话 HTML。
+
+```bash
+python3 chatgpt-history-export.py <ChatGPT导出文件夹路径> -output <输出html路径>
+```
